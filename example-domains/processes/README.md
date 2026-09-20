@@ -4,6 +4,21 @@ Shell helpers for inspecting and managing processes.
 The termination helper requires Bash and Linux `pgrep` (procps-ng, with
 `--ignore-ancestors` support).
 
+## Detached commands
+
+Launch a command without keeping it in the current Zsh job table or connecting
+it to the terminal's input and output:
+
+```zsh
+detach discord
+detach some-gui-program --some-option
+```
+
+`detach` is Zsh-specific. It backgrounds and immediately disowns the command,
+redirects standard input from `/dev/null`, and discards standard output and
+standard error. If the command does not start correctly, run it normally to see
+its error output.
+
 ## Firefox
 
 ```sh

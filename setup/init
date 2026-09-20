@@ -122,11 +122,15 @@ source_functions() {
     while IFS= read -r -d '' func_file; do
         IFS= read -r first <"$func_file" || continue
         case "$first" in
-        '#!'*)
-            # shellcheck source=/dev/null
-            . "$func_file"
+        '#!'*zsh*)
+            [[ -n "${ZSH_VERSION:-}" ]] || continue
             ;;
+        '#!'*) ;;
+        *) continue ;;
         esac
+
+        # shellcheck source=/dev/null
+        . "$func_file"
     done < <(find "$domains_dir" -type d -name .git -prune -o \
         -type f -path '*/functions/*' -print0)
 }

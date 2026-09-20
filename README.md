@@ -87,6 +87,10 @@ dclean() {
 }
 ```
 
+These files are sourced, not executed. The shebang helps editors identify the
+shell syntax, and Shellbox uses it to recognize function files. A `zsh`
+shebang also tells Shellbox to skip that file when running under Bash.
+
 Files under `scripts/` are standalone scripts with a shebang. Their filenames
 become commands on `PATH`:
 
