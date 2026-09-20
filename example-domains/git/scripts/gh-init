@@ -1,0 +1,421 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+repo_name=""
+description=""
+visibility="private"
+gitignore="minimal"
+create_readme=1
+assume_yes=0
+interactive=0
+tmp_file=""
+
+usage() {
+    cat <<'EOF'
+usage: gh-init [[OWNER/]NAME] [OPTIONS]
+
+Initialize the current directory, create an initial commit, create a GitHub
+repository, add origin, and push main.
+
+Run without arguments to choose settings interactively.
+
+Options:
+  --private                 private repository (default)
+  --public                  public repository
+  --internal                internal repository
+  -d, --description TEXT    repository description
+  -g, --gitignore TEMPLATE  GitHub template such as Node, Python, or Go
+      --no-gitignore        do not create .gitignore
+      --no-readme           do not create README.md
+  -y, --yes                 skip final confirmation
+  -h, --help                show this help
+EOF
+}
+
+die() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ -n "$tmp_file" && -e "$tmp_file" ]]; then
+        rm -f -- "$tmp_file"
+    fi
+}
+
+validate_gitignore() {
+    local templates
+    local template
+    local reset_nocasematch=0
+
+    case "$gitignore" in
+    minimal | none)
+        return 0
+        ;;
+    esac
+
+    if ! templates=$(gh repo gitignore list); then
+        die "unable to load GitHub .gitignore templates"
+    fi
+
+    if ! shopt -q nocasematch; then
+        shopt -s nocasematch
+        reset_nocasematch=1
+    fi
+
+    while IFS= read -r template; do
+        if [[ "$template" == "$gitignore" ]]; then
+            gitignore=$template
+            if [[ "$reset_nocasematch" == 1 ]]; then
+                shopt -u nocasematch
+            fi
+            return 0
+        fi
+    done <<<"$templates"
+
+    if [[ "$reset_nocasematch" == 1 ]]; then
+        shopt -u nocasematch
+    fi
+    return 1
+}
+
+prompt_gitignore() {
+    local answer
+    local first_attempt=1
+
+    while true; do
+        if [[ "$first_attempt" == 1 ]]; then
+            printf '.gitignore [minimal/none/template] [minimal]: ' >&2
+        else
+            printf 'Try another .gitignore value [minimal]: ' >&2
+        fi
+
+        IFS= read -r answer || die "unable to read .gitignore choice"
+        gitignore=${answer:-minimal}
+
+        if validate_gitignore; then
+            if [[ "$gitignore" != "minimal" && "$gitignore" != "none" ]]; then
+                printf 'Using GitHub template: %s\n' "$gitignore" >&2
+            fi
+            return 0
+        fi
+
+        printf 'No template named "%s".\n' "$gitignore" >&2
+        if [[ "$first_attempt" == 1 ]]; then
+            printf 'List templates: gh repo gitignore list\n' >&2
+        fi
+        printf '\n' >&2
+        first_attempt=0
+    done
+}
+
+parse_args() {
+    if [[ $# -eq 0 ]]; then
+        interactive=1
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --private)
+            visibility="private"
+            ;;
+        --public)
+            visibility="public"
+            ;;
+        --internal)
+            visibility="internal"
+            ;;
+        -d | --description)
+            [[ $# -ge 2 ]] || die "$1 requires a value"
+            description=$2
+            shift
+            ;;
+        -g | --gitignore)
+            [[ $# -ge 2 && -n "$2" ]] || die "$1 requires a template name"
+            gitignore=$2
+            shift
+            ;;
+        --no-gitignore)
+            gitignore="none"
+            ;;
+        --no-readme)
+            create_readme=0
+            ;;
+        -y | --yes)
+            assume_yes=1
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        -*)
+            die "unknown option: $1"
+            ;;
+        *)
+            [[ -z "$repo_name" ]] || die "only one repository name may be supplied"
+            [[ -n "$1" ]] || die "repository name cannot be empty"
+            repo_name=$1
+            ;;
+        esac
+        shift
+    done
+}
+
+check_prerequisites() {
+    command -v git >/dev/null 2>&1 || die "git is required"
+    command -v gh >/dev/null 2>&1 || die "GitHub CLI (gh) is required"
+
+    # Refuse both an existing repository and a directory nested inside one.
+    if [[ -e .git || -L .git ]]; then
+        die "the current directory already contains .git metadata"
+    fi
+
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+        die "the current directory is already inside a Git repository"
+    fi
+
+    gh auth status >/dev/null 2>&1 ||
+        die "GitHub CLI is not authenticated; run: gh auth login"
+
+    git var GIT_AUTHOR_IDENT >/dev/null 2>&1 ||
+        die "Git author identity is not configured"
+}
+
+collect_configuration() {
+    local answer
+
+    repo_name=${repo_name:-"$(basename "$PWD")"}
+    [[ -n "$repo_name" ]] || die "repository name cannot be empty"
+
+    if [[ "$interactive" != 1 ]]; then
+        if [[ ! -e .gitignore && ! -L .gitignore ]] &&
+            ! validate_gitignore; then
+            die "GitHub .gitignore template '$gitignore' does not exist; list valid template names with: gh repo gitignore list"
+        fi
+        return 0
+    fi
+
+    [[ -t 0 ]] || die "interactive mode requires a terminal"
+
+    printf '\ngh-init - configure repository\n\n' >&2
+
+    printf 'Repository name [%s]: ' "$repo_name" >&2
+    IFS= read -r answer || die "unable to read repository name"
+    repo_name=${answer:-$repo_name}
+
+    printf 'Description (optional): ' >&2
+    IFS= read -r description || die "unable to read description"
+
+    while true; do
+        printf 'Visibility [private/public/internal] [private]: ' >&2
+        IFS= read -r answer || die "unable to read visibility"
+        visibility=${answer:-private}
+
+        case "$visibility" in
+        private | public | internal)
+            break
+            ;;
+        *)
+            printf 'Please enter private, public, or internal.\n' >&2
+            ;;
+        esac
+    done
+
+    while true; do
+        printf 'Create README.md? [Y/n]: ' >&2
+        IFS= read -r answer || die "unable to read README choice"
+
+        case "$answer" in
+        "" | y | Y | yes | Yes | YES)
+            create_readme=1
+            break
+            ;;
+        n | N | no | No | NO)
+            create_readme=0
+            break
+            ;;
+        *)
+            printf 'Please enter y or n.\n' >&2
+            ;;
+        esac
+    done
+
+    if [[ ! -e .gitignore && ! -L .gitignore ]]; then
+        printf '\n' >&2
+        prompt_gitignore
+    fi
+}
+
+print_plan() {
+    printf '\nPlan\n'
+    printf '  Repository:  %s (%s)\n' "$repo_name" "$visibility"
+    printf '  Directory:   %s\n' "$PWD"
+
+    if [[ -n "$description" ]]; then
+        printf '  Description: %s\n' "$description"
+    else
+        printf '  Description: none\n'
+    fi
+
+    if [[ -e README.md || -L README.md ]]; then
+        printf '  README.md:   keep existing file\n'
+    elif [[ "$create_readme" == 1 ]]; then
+        printf '  README.md:   create\n'
+    else
+        printf '  README.md:   do not create\n'
+    fi
+
+    if [[ -e .gitignore || -L .gitignore ]]; then
+        printf '  .gitignore:  keep existing file\n'
+    elif [[ "$gitignore" == "minimal" ]]; then
+        printf '  .gitignore:  create minimal file\n'
+    elif [[ "$gitignore" == "none" ]]; then
+        printf '  .gitignore:  do not create\n'
+    else
+        printf '  .gitignore:  GitHub template %s\n' "$gitignore"
+    fi
+
+    printf '  Commit:      Initial commit (stage every file)\n'
+    printf '  Remote:      create origin and push main\n'
+}
+
+confirm_plan() {
+    local answer
+
+    if [[ "$assume_yes" == 1 ]]; then
+        return 0
+    fi
+
+    [[ -t 0 ]] || die "confirmation requires a terminal; pass --yes to continue"
+
+    printf '\nCreate this repository? [y/N]: ' >&2
+    IFS= read -r answer || die "unable to read confirmation"
+
+    case "$answer" in
+    y | Y | yes | Yes | YES)
+        ;;
+    *)
+        printf 'Cancelled. No files or repositories were changed.\n' >&2
+        exit 1
+        ;;
+    esac
+}
+
+create_gitignore_file() {
+    if [[ "$gitignore" == "none" ]]; then
+        return 0
+    fi
+
+    if [[ -e .gitignore || -L .gitignore ]]; then
+        printf 'Keeping existing .gitignore\n'
+    elif [[ "$gitignore" == "minimal" ]]; then
+        printf '%s\n' \
+            '.env' \
+            '.env.*' \
+            '!.env.example' \
+            '.DS_Store' \
+            '*.log' >.gitignore
+
+        printf 'Created minimal .gitignore\n'
+    else
+        tmp_file=$(mktemp "${TMPDIR:-/tmp}/gh-init.XXXXXX")
+
+        if ! gh repo gitignore view "$gitignore" >"$tmp_file"; then
+            die "unable to fetch GitHub .gitignore template: $gitignore"
+        fi
+
+        mv -- "$tmp_file" .gitignore
+        tmp_file=""
+        printf 'Created .gitignore from the %s template\n' "$gitignore"
+    fi
+}
+
+create_readme_file() {
+    local project_name
+
+    if [[ "$create_readme" != 1 ]]; then
+        return 0
+    fi
+
+    if [[ -e README.md || -L README.md ]]; then
+        printf 'Keeping existing README.md\n'
+        return 0
+    fi
+
+    project_name=${repo_name##*/}
+
+    {
+        printf '# %s\n' "$project_name"
+
+        if [[ -n "$description" ]]; then
+            printf '\n%s\n' "$description"
+        fi
+    } >README.md
+
+    printf 'Created README.md\n'
+}
+
+initialize_local_repository() {
+    git init --initial-branch=main
+}
+
+create_initial_commit() {
+    printf '\nInitial commit contents:\n'
+    git status --short
+
+    git add --all
+
+    if git diff --cached --quiet; then
+        die "there is nothing to commit"
+    fi
+
+    git diff --cached --check
+    git commit -m "Initial commit"
+}
+
+create_github_repository() {
+    local -a gh_args=(
+        repo create "$repo_name"
+        "--$visibility"
+        --source=.
+        --remote=origin
+        --push
+    )
+
+    if [[ -n "$description" ]]; then
+        gh_args+=(--description "$description")
+    fi
+
+    if ! gh "${gh_args[@]}"; then
+        printf '\nGitHub creation or push failed. The local commit was preserved.\n' >&2
+
+        if git remote get-url origin >/dev/null 2>&1; then
+            printf 'An origin remote exists. Retry with:\n' >&2
+            printf '  git push --set-upstream origin HEAD\n' >&2
+        fi
+
+        exit 1
+    fi
+}
+
+execute_plan() {
+    initialize_local_repository
+    create_readme_file
+    create_gitignore_file
+    create_initial_commit
+    create_github_repository
+}
+
+main() {
+    trap cleanup EXIT
+
+    parse_args "$@"
+    check_prerequisites
+    collect_configuration
+    print_plan
+    confirm_plan
+    execute_plan
+}
+
+main "$@"
