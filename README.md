@@ -20,15 +20,39 @@ inspect.
 
 That is the whole mechanism. There is no plugin manager or manifest.
 
-## Domains
+### What Is a Domain
+
+A domain is a directory that groups related aliases, functions, and scripts.
 
 Shellbox has two domain directories:
 
-- `domains/` contains local helpers and is ignored by Git.
+- `domains/` contains custom helpers and is ignored by Git.
 - `example-domains/` contains the helpers I use on my machines.
 
-Only `domains/` is loaded by default. With `--with-examples`, the example
-domains load first and the local domains load afterward.
+### List Helpers
+
+Show every alias, function, and script found in both `example-domains/` and
+`domains/`, grouped by domain:
+
+```sh
+shellbox-list
+```
+
+Example output:
+
+```text
+shellbox
+└── git
+    ├── aliases
+    │   ├── alias gdiscard='git restore --worktree --'
+    │   ├── alias gp='git push'
+    │   ├── alias gpl='git pull --ff-only'
+    │   └── alias gs='git status'
+    ├── functions
+    │   └── gd
+    └── scripts
+        └── gh-init
+```
 
 ## Setup
 
@@ -49,66 +73,48 @@ source "/path/to/shellbox/setup/init" --domains-only
 
 Open a new shell after setup.
 
-To also load `example-domains/`:
+### Example Domains vs. Custom Domains
+
+The default setup loads only custom domains from `domains/`. To also load the
+included `example-domains/`:
 
 ```sh
 ./setup.sh --with-examples
 ```
 
-Running setup again switches between the two modes without adding another
-block.
+Example domains load first and custom domains load afterward. Running setup
+again switches between the two modes without adding another block.
 
-## List helpers
+The included domains cover files, Git, grep, navigation, processes, Python,
+and tmux. See [example-domains/README.md](./example-domains/README.md) for their
+commands and requirements.
 
-Show every alias, function, and script found in both `example-domains/` and
-`domains/`, grouped by domain:
+### Create a Domain
 
-```sh
-shellbox-list
-```
-
-Example output:
+Create a directory under `domains/`:
 
 ```text
-shellbox
-├── docker
-│   ├── aliases
-│   │   └── alias dps='docker ps'
-│   ├── functions
-│   │   └── dclean
-│   └── scripts
-│       └── docker-summary
-└── git
-    └── aliases
-        └── alias gs='git status'
-```
-
-## Create a domain
-
-A domain is just a directory:
-
-```text
-domains/docker/
+domains/git/
 ├── aliases
 ├── functions/
-│   └── dclean
+│   └── gd
 └── scripts/
-    └── docker-summary
+    └── gh-init
 ```
 
 `aliases` contains normal alias definitions:
 
 ```zsh
-alias dps='docker ps'
+alias gs='git status'
 ```
 
 Files under `functions/` have a shebang and define a function:
 
-```zsh
-#!/usr/bin/env zsh
+```bash
+#!/usr/bin/env bash
 
-dclean() {
-    docker container prune
+gd() {
+    command git diff "$@"
 }
 ```
 
@@ -122,7 +128,7 @@ become commands on `PATH`:
 ```bash
 #!/usr/bin/env bash
 
-docker system df
+gh repo create "$@"
 ```
 
 No registration is needed. Open a new shell and the domain is loaded.
@@ -133,11 +139,7 @@ An example domain can also be copied as a starting point:
 cp -R example-domains/git domains/git
 ```
 
-The included domains cover files, Git, grep, navigation, processes, Python, and tmux. See
-[example-domains/README.md](./example-domains/README.md) for the commands and
-requirements.
-
-## Keep local domains in Git
+### Keep Custom Domains in Git
 
 `domains/` is ignored by the main repo. It can be its own Git repository:
 
@@ -150,7 +152,7 @@ git -C domains commit -m "Add my shell domains"
 Since `domains/` is ignored, deleting the Shellbox directory also deletes those
 local files unless they are stored somewhere else.
 
-## Other setup options
+### Other Setup Options
 
 ```sh
 ./setup.sh --dry-run
@@ -164,7 +166,7 @@ available options.
 Zsh uses `${ZDOTDIR:-$HOME}/.zshrc` by default. Bash support is kept where it
 stays simple, but Zsh is the main target.
 
-## Upgrading from the old layout
+### Upgrading from the Old Layout
 
 The old version loaded helpers from `modules/`. Run
 `./setup.sh --with-examples` to keep loading the included helpers, then move any
