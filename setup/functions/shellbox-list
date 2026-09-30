@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+
+shellbox-list() {
+    local domain_name domain_names
+    local root_dir alias_file alias_lines
+    local item_dir item_path first_line item
+    local function_names script_names
+
+    domain_names=$(
+        {
+            for root_dir in \
+                "$SHELLBOX_DIR/example-domains" \
+                "$SHELLBOX_DIR/domains"; do
+                [[ -d "$root_dir" ]] || continue
+                find "$root_dir" -mindepth 1 -maxdepth 1 -type d \
+                    ! -name .git -printf '%f\n'
+            done
+        } | LC_ALL=C sort -u
+    )
+
+    {
+        while IFS= read -r domain_name; do
+            [[ -n "$domain_name" ]] || continue
+
+            alias_lines=$(
+                {
+                    for root_dir in \
+                        "$SHELLBOX_DIR/example-domains" \
+                        "$SHELLBOX_DIR/domains"; do
+                        alias_file="$root_dir/$domain_name/aliases"
+                        [[ -f "$alias_file" ]] || continue
+                        awk '
+                            {
+                                line = $0
+                                sub(/^[[:space:]]*/, "", line)
+                                if (line ~ /^alias[[:space:]]+/) print line
+                            }
+                        ' "$alias_file"
+                    done
+                } | LC_ALL=C sort -u
+            )
+
+            function_names=$(
+                {
+                    for root_dir in \
+                        "$SHELLBOX_DIR/example-domains" \
+                        "$SHELLBOX_DIR/domains"; do
+                        item_dir="$root_dir/$domain_name/functions"
+                        [[ -d "$item_dir" ]] || continue
+                        while IFS= read -r -d '' item_path; do
+                            IFS= read -r first_line <"$item_path" || continue
+                            case "$first_line" in
+                            '#!'*) printf '%s\n' "${item_path#"$item_dir"/}" ;;
+                            esac
+                        done < <(find "$item_dir" -type d -name .git -prune -o \
+                            -type f -print0)
+                    done
+                } | LC_ALL=C sort -u
+            )
+
+            script_names=$(
+                {
+                    for root_dir in \
+                        "$SHELLBOX_DIR/example-domains" \
+                        "$SHELLBOX_DIR/domains"; do
+                        item_dir="$root_dir/$domain_name/scripts"
+                        [[ -d "$item_dir" ]] || continue
+                        while IFS= read -r -d '' item_path; do
+                            IFS= read -r first_line <"$item_path" || continue
+                            case "$first_line" in
+                            '#!'*) printf '%s\n' "${item_path#"$item_dir"/}" ;;
+                            esac
+                        done < <(find "$item_dir" -type d -name .git -prune -o \
+                            -type f -print0)
+                    done
+                } | LC_ALL=C sort -u
+            )
+
+            if [[ -z "$alias_lines" && -z "$function_names" && -z "$script_names" ]]; then
+                continue
+            fi
+
+            printf 'D\t%s\n' "$domain_name"
+
+            if [[ -n "$alias_lines" ]]; then
+                printf 'C\taliases\n'
+                while IFS= read -r item; do
+                    [[ -n "$item" ]] && printf 'I\t%s\n' "$item"
+                done <<<"$alias_lines"
+            fi
+
+            if [[ -n "$function_names" ]]; then
+                printf 'C\tfunctions\n'
+                while IFS= read -r item; do
+                    [[ -n "$item" ]] && printf 'I\t%s\n' "$item"
+                done <<<"$function_names"
+            fi
+
+            if [[ -n "$script_names" ]]; then
+                printf 'C\tscripts\n'
+                while IFS= read -r item; do
+                    [[ -n "$item" ]] && printf 'I\t%s\n' "$item"
+                done <<<"$script_names"
+            fi
+        done <<<"$domain_names"
+    } | awk '
+        {
+            row[NR] = $0
+            kind = substr($0, 1, 1)
+
+            if (kind == "D") {
+                if (category_row) is_last[category_row] = 1
+                if (item_row) is_last[item_row] = 1
+                category_row = 0
+                item_row = 0
+                domain_row = NR
+            } else if (kind == "C") {
+                if (item_row) is_last[item_row] = 1
+                item_row = 0
+                category_row = NR
+            } else {
+                item_row = NR
+            }
+        }
+        END {
+            if (domain_row) is_last[domain_row] = 1
+            if (category_row) is_last[category_row] = 1
+            if (item_row) is_last[item_row] = 1
+
+            print "shellbox"
+
+            for (i = 1; i <= NR; i++) {
+                kind = substr(row[i], 1, 1)
+                value = substr(row[i], 3)
+                domain_prefix = domain_is_last ? "    " : "│   "
+
+                if (kind == "D") {
+                    domain_is_last = is_last[i]
+                    connector = domain_is_last ? "└── " : "├── "
+                    print connector value
+                } else if (kind == "C") {
+                    category_is_last = is_last[i]
+                    connector = category_is_last ? "└── " : "├── "
+                    print domain_prefix connector value
+                } else {
+                    category_prefix = category_is_last ? "    " : "│   "
+                    connector = is_last[i] ? "└── " : "├── "
+                    print domain_prefix category_prefix connector value
+                }
+            }
+        }
+    '
+}

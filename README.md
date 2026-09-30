@@ -58,6 +58,31 @@ To also load `example-domains/`:
 Running setup again switches between the two modes without adding another
 block.
 
+## List helpers
+
+Show every alias, function, and script found in both `example-domains/` and
+`domains/`, grouped by domain:
+
+```sh
+shellbox-list
+```
+
+Example output:
+
+```text
+shellbox
+├── docker
+│   ├── aliases
+│   │   └── alias dps='docker ps'
+│   ├── functions
+│   │   └── dclean
+│   └── scripts
+│       └── docker-summary
+└── git
+    └── aliases
+        └── alias gs='git status'
+```
+
 ## Create a domain
 
 A domain is just a directory:

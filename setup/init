@@ -180,6 +180,7 @@ main() {
     # wire up PATH, links, and shell helpers.
     ensure_domains_dir || return $?
     ensure_bin_path
+    source_functions "$SHELLBOX_DIR/setup"
     clear_script_links
     if ((load_examples)); then
         load_domains "$SHELLBOX_DIR/example-domains"
